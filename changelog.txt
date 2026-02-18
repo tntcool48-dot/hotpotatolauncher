@@ -1,0 +1,9 @@
+Menu to choose seed, game mode, difficulty, and hardcore mode
+Option to import existing world folders
+Panic button now stops fire, TNT, and mob damage on all server types
+Fixed server commands failing on some versions
+Web browser opens automatically to setup the connection link
+Default memory limit raised to 6GB
+Fixed text colors in menus being hard to read
+Folder buttons now create missing folders automatically
+Added help text when hovering over buttons
