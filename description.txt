@@ -1,0 +1,59 @@
+Multiple server profile management
+
+Real-time console output log
+
+Command input with enter key support
+
+CPU and RAM usage monitoring
+
+Session uptime tracker
+
+Automatic zombie process cleanup on exit
+
+Hybrid networking modes (Automatic, Playit-only, Radmin)
+
+Integrated Playit.gg tunnel downloading and launching
+
+Automatic browser launch for tunnel claiming
+
+Automatic UPnP port forwarding attempts
+
+Java heap memory allocation slider (Default 6GB)
+
+Java version selector (Java 8 vs Java 17)
+
+Server jar auto-detection and selection
+
+Mod loader presets for Vanilla, Paper, Forge, and Fabric
+
+New world generation with custom seed input
+
+Gamemode selector (Survival, Creative, Adventure, Spectator)
+
+Difficulty selector (Peaceful, Easy, Normal, Hard)
+
+Hardcore mode toggle
+
+World import functionality for existing maps
+
+Automated cloud backup and sync via Rclone
+
+Cloud file locking to prevent write conflicts
+
+Tree Saver protocol for instant anti-griefing commands
+
+Whitelist management interface
+
+Online mode toggle for premium or cracked support
+
+Max players, view distance, and simulation distance sliders
+
+Direct download buttons for EssentialsX, WorldEdit, and Geyser
+
+One-click installers for Paper, Forge, and Fabric
+
+Quick access buttons for server, plugins, and mods folders
+
+Byte-stream command injection for Paper/Linux compatibility
+
+Hidden admin lock mode via title click functionality
