@@ -23,7 +23,7 @@ namespace HotPotatoLauncher.Core
         private static string SanitizeRemotePath(string path)
         {
             // Strip characters that could enable shell injection
-            return Regex.Replace(path, @"[;&|`$(){}!<>]", "");
+            return Regex.Replace(path, @"[;&|`$(){}!<>\""']", "");
         }
 
         public RcloneWrapper(string localProfilePath, string remoteVault, string profileName)

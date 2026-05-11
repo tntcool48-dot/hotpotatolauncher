@@ -440,6 +440,10 @@ namespace HotPotatoLauncher
                             _profileMgr = ProfileManager.Load();
                             _profileMgr.LastUsedIndex = oldIndex;
                             p = _profileMgr.ActiveProfile;
+                            
+                            // Prevent cloud sync from wiping out the RAM slider choice the user just made
+                            p.AllocatedRam = ram;
+                            _profileMgr.Save();
 
                             ComboProfiles.ItemsSource = _profileMgr.Profiles;
                             ComboProfiles.SelectedIndex = _profileMgr.LastUsedIndex;
@@ -554,13 +558,6 @@ namespace HotPotatoLauncher
 
                 if (string.IsNullOrEmpty(jarToRun)) throw new Exception("Missing Server Jar");
 
-                // --- 7.5 AUTO-EULA ---
-                string eulaPath = Path.Combine(serverPath, "eula.txt");
-                if (!File.Exists(eulaPath) || !File.ReadAllText(eulaPath).Contains("eula=true"))
-                {
-                    File.WriteAllText(eulaPath, "eula=true");
-                }
-
                 string propsPath = Path.Combine(serverPath, "server.properties");
                 if (!File.Exists(propsPath) && !string.IsNullOrEmpty(p.WorldSeed))
                 {
@@ -578,8 +575,16 @@ namespace HotPotatoLauncher
                 // FIX 3.6: Reset stop flag before launch
                 _userRequestedStop = false;
 
-                // FIX 2.6: Pass ForceUpgrade flag
-                await Task.Run(() => _serverMgr.StartServerProcess(ram, p.ModLoader, jarToRun, p.ShowConsole, p.ForceUpgrade));
+                // FIX 2.6: Pass ForceUpgrade flag and reset it
+                bool shouldForceUpgrade = p.ForceUpgrade;
+                if (shouldForceUpgrade)
+                {
+                    p.ForceUpgrade = false;
+                    Dispatcher.Invoke(() => { if (ChkForceUpgrade != null) ChkForceUpgrade.IsChecked = false; });
+                    _profileMgr.Save();
+                }
+
+                await Task.Run(() => _serverMgr.StartServerProcess(ram, p.ModLoader, jarToRun, p.ShowConsole, shouldForceUpgrade));
 
                 // --- 9. CLEANUP ---
                 Log("🛑 Server Stopped.");
@@ -917,8 +922,8 @@ namespace HotPotatoLauncher
             // Cap log at ~5000 lines to prevent unbounded memory growth
             if (LogBox.LineCount > 5000)
             {
-                int removeUpTo = LogBox.GetCharacterIndexFromLineIndex(LogBox.LineCount - 4000);
-                LogBox.Text = LogBox.Text.Substring(removeUpTo);
+                LogBox.Clear();
+                LogBox.AppendText("--- LOG CLEARED TO PREVENT MEMORY LEAK ---\n");
             }
         }
 
