@@ -57,7 +57,13 @@ namespace HotPotatoLauncher.Core
                 }
 
                 string paperPath = Path.Combine(installersDir, "default_paper.jar");
-                if (!File.Exists(paperPath))
+                bool needsPaper = !File.Exists(paperPath);
+                if (!needsPaper && new FileInfo(paperPath).Length < 1024 * 1024) // If it's under 1MB, it's a dummy text file from an old run
+                {
+                    needsPaper = true;
+                }
+
+                if (needsPaper)
                 {
                     logCallback?.Invoke("⏳ Downloading default Paper 1.20.4 jar...");
                     try 
