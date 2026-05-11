@@ -1,9 +1,31 @@
-Menu to choose seed, game mode, difficulty, and hardcore mode
-Option to import existing world folders
-Panic button now stops fire, TNT, and mob damage on all server types
-Fixed server commands failing on some versions
-Web browser opens automatically to setup the connection link
-Default memory limit raised to 6GB
-Fixed text colors in menus being hard to read
-Folder buttons now create missing folders automatically
-Added help text when hovering over buttons
+Version 1.1 - Performance, Modding, and Reliability
+
+Smoother Performance & Interface
+
+    Lag-Free Console: The server console can now handle massive amounts of text output without freezing or slowing down the app, ensuring the UI stays completely responsive even during heavy world generation or server warnings.
+
+    Cleaner Settings: The settings menus have been reorganized into collapsible sections, removing clutter and making it much easier to find what you need.
+
+Modding Made Easy
+
+    Modern Forge & Fabric Ready: Full, out-of-the-box support for the newest Forge and Fabric versions. You no longer need to manually edit .bat files or launch arguments to get them running.
+
+    Automatic Setup: On a fresh install, the app will automatically fetch the latest Paper or Fabric files for you so you can start hosting immediately without hunting for downloads.
+
+Smarter Resource Management
+
+    Fixed RAM Overhead & Scaling: The launcher is now much smarter about how it handles your PC's memory. It no longer forcefully seizes 100% of your allocated RAM immediately upon startup, allowing for dynamic scaling. We also relaxed the overly strict physical memory checks so the server actually launches when it should.
+
+Bulletproof Cloud Sync & Saving
+
+    Safer World Sync: Overhauled the cloud sync engine. It is now much smarter at detecting existing data and empty folders, ensuring it will never accidentally overwrite or erase your local world data.
+
+    Persistent Settings: Fixed an issue where the cloud sync would sometimes reset your custom RAM allocation. Your server settings are now strictly enforced.
+
+Crucial Fixes & Quality of Life
+
+    Working Offline Whitelists: Fixed how player IDs are generated in offline mode. Player data, inventories, and whitelists will now save and recognize players correctly.
+
+    Self-Healing App: If the launcher detects missing core files for the sync engine, it will silently download and repair them in the background instead of throwing an error.
+
+    Stability: Eliminated sudden crashes that occurred during rapid server restarts or when initially accepting the EULA. Fixed a bug where the server would get stuck in a force-upgrade loop.
