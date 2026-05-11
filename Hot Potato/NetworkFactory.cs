@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 using System;
 using System.Linq;
 using System.Net.NetworkInformation;
@@ -18,7 +18,8 @@ namespace HotPotatoLauncher.Networking
             _logger = logger;
         }
 
-        public async Task<string> InitializeAsync(NetworkType mode)
+        // FIX 2.4: Accept port parameter instead of hardcoded 25565
+        public async Task<string> InitializeAsync(NetworkType mode, int port = 25565)
         {
             // Reset previous tunnel
             if (_playit != null) { _playit.Stop(); _playit = null; }
@@ -26,12 +27,12 @@ namespace HotPotatoLauncher.Networking
             switch (mode)
             {
                 case NetworkType.Automatic:
-                    _logger("🌐 Mode: Automatic. Attempting UPnP (Port Forwarding)...");
-                    if (await UpnpManager.TryOpenPortAsync(25565))
+                    _logger($"🌐 Mode: Automatic. Attempting UPnP on port {port}...");
+                    if (await UpnpManager.TryOpenPortAsync(port))
                     {
                         string ip = await UpnpManager.GetPublicIpAsync();
-                        _logger($"✅ UPnP Success! Direct IP: {ip}");
-                        return ip;
+                        _logger($"✅ UPnP Success! Direct IP: {ip}:{port}");
+                        return port == 25565 ? ip : $"{ip}:{port}";
                     }
                     else
                     {
@@ -46,34 +47,45 @@ namespace HotPotatoLauncher.Networking
                 case NetworkType.Radmin:
                     _logger("🛡️ Mode: Radmin VPN (Local/VPN).");
                     string radminIp = GetRadminIp();
-                    if (radminIp == "127.0.0.1") _logger("❌ Could not find Radmin IP (26.x.x.x). Is Radmin turned on?");
-                    else _logger($"✅ Radmin IP Found: {radminIp}");
-                    return radminIp;
+                    if (radminIp == "127.0.0.1")
+                        _logger("❌ Could not find Radmin VPN adapter. Is Radmin turned on?");
+                    else
+                        _logger($"✅ Radmin IP Found: {radminIp}:{port}");
+                    return port == 25565 ? radminIp : $"{radminIp}:{port}";
 
                 default:
                     return "127.0.0.1";
             }
         }
 
+        // FIX 4.4: Improved Radmin detection using NetworkInterface.Description
         private string GetRadminIp()
         {
             try
             {
                 foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    // Radmin usually usually has 'Radmin' in description or an IP starting with 26.
+                    if (ni.OperationalStatus != OperationalStatus.Up) continue;
+
                     var props = ni.GetIPProperties();
                     foreach (var unicast in props.UnicastAddresses)
                     {
                         if (unicast.Address.AddressFamily == AddressFamily.InterNetwork)
                         {
                             string ip = unicast.Address.ToString();
-                            if (ip.StartsWith("26.")) return ip;
+                            string desc = ni.Description ?? "";
+
+                            // FIX 4.4: Check adapter description for "Radmin" AND/OR IP range 26.x.x.x
+                            if (desc.Contains("Radmin", StringComparison.OrdinalIgnoreCase) || ip.StartsWith("26."))
+                                return ip;
                         }
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger($"⚠️ Radmin IP detection error: {ex.Message}");
+            }
             return "127.0.0.1"; // Not found
         }
 

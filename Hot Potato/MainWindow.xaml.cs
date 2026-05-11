@@ -1,9 +1,11 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,7 +35,14 @@ namespace HotPotatoLauncher
         private DispatcherTimer _resourceTimer;
         private Stopwatch _uptimeStopwatch = new Stopwatch();
 
-        // Troll Variables
+        // FIX 1.1: Batched logging to prevent UI freeze
+        private readonly ConcurrentQueue<string> _logQueue = new();
+        private DispatcherTimer _logFlushTimer;
+
+        // FIX 3.6: Track user-initiated stop to avoid false crash detection
+        private bool _userRequestedStop = false;
+
+        // Omar Protocol Variables
         private int _secretClickCount = 0;
 
         public MainWindow()
@@ -73,41 +82,42 @@ namespace HotPotatoLauncher
             _resourceTimer.Interval = TimeSpan.FromSeconds(2);
             _resourceTimer.Tick += UpdateResources;
 
+            // FIX 1.1: Log flush timer — batches UI updates every 150ms
+            _logFlushTimer = new DispatcherTimer();
+            _logFlushTimer.Interval = TimeSpan.FromMilliseconds(150);
+            _logFlushTimer.Tick += FlushLogQueue;
+            _logFlushTimer.Start();
+
             InitializeEngines();
         }
 
         private void InitializeEngines()
         {
             var p = _profileMgr.ActiveProfile;
-            p.IsTreeSaverEnabled = false;
-            _profileMgr.Save();
             string serverPath = Path.Combine(AppPaths.ServerDataDir, p.FolderName);
             Directory.CreateDirectory(serverPath);
 
             // --- NETWORKING INIT ---
             _netFactory = new NetworkFactory(Log);
 
+            // FIX 3.2: Unsubscribe old events before creating new instances to prevent memory leak
+            if (_rclone != null)
+            {
+                _rclone.OnLogReceived -= Log;
+                _rclone.OnProgressUpdate -= OnRcloneProgress;
+            }
+
             // Cloud Wrapper
             _rclone = new RcloneWrapper(serverPath, p.RemoteVaultName, p.FolderName);
             _rclone.OnLogReceived += Log;
-            _rclone.OnProgressUpdate += (percent) =>
-            {
-                Dispatcher.Invoke(() => {
-                    if (MainProgressBar != null)
-                    {
-                        MainProgressBar.IsIndeterminate = false;
-                        MainProgressBar.Value = percent;
-                    }
-                });
-            };
+            _rclone.OnProgressUpdate += OnRcloneProgress;
 
             // Lock Manager (We use a placeholder IP until networking starts)
             _lockMgr = new LockManager(_rclone, Environment.UserName, "0.0.0.0");
 
             // =========================================================
-            // UI STATE SYNC (Merged from Advanced Window)
+            // UI STATE SYNC
             // =========================================================
-            UpdateTreeSaverUi();
 
             // Toggles
             if (ChkOnline != null) ChkOnline.IsChecked = p.OnlineMode;
@@ -153,7 +163,29 @@ namespace HotPotatoLauncher
                 ComboNet.SelectedItem = p.NetworkMode;
             }
 
+            // FIX 2.4: Port UI sync
+            if (TxtPort != null) TxtPort.Text = p.ServerPort.ToString();
+
+            // FIX 2.6: ForceUpgrade UI sync
+            if (ChkForceUpgrade != null) ChkForceUpgrade.IsChecked = p.ForceUpgrade;
+
+            // FIX 2.5: Dynamic mod/plugin visibility
+            UpdateModPluginVisibility(p.ModLoader);
+
             RefreshJarList(serverPath);
+        }
+
+        // FIX 2.5: Show/hide plugin and mod UI elements based on server type
+        private void UpdateModPluginVisibility(ServerType loader)
+        {
+            // Plugins: visible for Vanilla/Paper only (not Forge/Fabric)
+            bool showPlugins = (loader == ServerType.Vanilla);
+            // Mods: visible for Forge/Fabric only
+            bool showMods = (loader == ServerType.Forge || loader == ServerType.Fabric);
+
+            if (BtnOpenPlugins != null) BtnOpenPlugins.Visibility = showPlugins ? Visibility.Visible : Visibility.Collapsed;
+            if (PanelPluginDownloads != null) PanelPluginDownloads.Visibility = showPlugins ? Visibility.Visible : Visibility.Collapsed;
+            if (BtnOpenModsBtn != null) BtnOpenModsBtn.Visibility = showMods ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void RefreshJarList(string path)
@@ -356,14 +388,16 @@ namespace HotPotatoLauncher
                 }
 
                 // --- 3. PRE-FLIGHT & NETWORKING ---
-                SystemDiagnostics.RunPreFlightChecks(ram * 1024);
+                // FIX 2.4 + 3.4: Pass port, handle soft warnings
+                var warnings = SystemDiagnostics.RunPreFlightChecks(ram * 1024, p.ServerPort);
+                foreach (var w in warnings) Log(w);
                 ServerManager.KillZombieProcesses();
 
                 string myIp = "127.0.0.1";
 
                 if (_netFactory != null)
                 {
-                    myIp = await _netFactory.InitializeAsync(p.NetworkMode);
+                    myIp = await _netFactory.InitializeAsync(p.NetworkMode, p.ServerPort);
                     Dispatcher.Invoke(() => { if (TxtZtIp != null) TxtZtIp.Text = $"IP: {myIp}"; });
                 }
 
@@ -399,7 +433,7 @@ namespace HotPotatoLauncher
                         if (_rclone != null)
                         {
                             await _rclone.SyncProfileDownAsync();
-                            await _rclone.SyncGlobalConfigDownAsync();
+                            await _rclone.MergeGlobalConfigDownAsync();
 
                             Log("🔄 Reloading Settings...");
                             var oldIndex = _profileMgr.LastUsedIndex;
@@ -459,7 +493,9 @@ namespace HotPotatoLauncher
                     var jars = Directory.GetFiles(serverPath, "*.jar");
                     IEnumerable<string> validJars = jars;
 
+                    // FIX 2.1: Added explicit Fabric filter
                     if (p.ModLoader == ServerType.Forge) validJars = jars.Where(j => j.ToLower().Contains("forge"));
+                    else if (p.ModLoader == ServerType.Fabric) validJars = jars.Where(j => j.ToLower().Contains("fabric"));
                     else if (p.ModLoader == ServerType.Vanilla) validJars = jars.Where(j => !j.ToLower().Contains("forge") && !j.ToLower().Contains("fabric"));
 
                     var bestJar = validJars.Where(j => !j.ToLower().Contains("installer") && !j.ToLower().Contains("default"))
@@ -539,21 +575,24 @@ namespace HotPotatoLauncher
                 _serverMgr.OnLogReceived += CheckForGreenLight;
                 await _serverMgr.InjectConfigurationAsync(myIp, p);
 
-                await Task.Run(() => _serverMgr.StartServerProcess(ram, p.ModLoader, jarToRun, p.ShowConsole));
+                // FIX 3.6: Reset stop flag before launch
+                _userRequestedStop = false;
+
+                // FIX 2.6: Pass ForceUpgrade flag
+                await Task.Run(() => _serverMgr.StartServerProcess(ram, p.ModLoader, jarToRun, p.ShowConsole, p.ForceUpgrade));
 
                 // --- 9. CLEANUP ---
                 Log("🛑 Server Stopped.");
 
-                // Crash Detection
-                if (_uptimeStopwatch.Elapsed.TotalSeconds > 0 && _uptimeStopwatch.Elapsed.TotalSeconds < 30)
+                // FIX 3.6: Only show crash popup if user didn't explicitly stop
+                if (!_userRequestedStop && _uptimeStopwatch.Elapsed.TotalSeconds > 0 && _uptimeStopwatch.Elapsed.TotalSeconds < 30)
                 {
                     MessageBox.Show(
                         "💥 SERVER DIED TOO FAST!\n\n" +
                         "It looks like the server crashed on startup.\n" +
                         "1. Did you install incompatible mods?\n" +
-                        "2. Is the Java version correct?\n" +
-                        "If you just turned off the server, you can ignore this message.\n\n" +
-                        "👉 ACTION: Send the 'latest.log' file to the yazan (Omar).",
+                        "2. Is the Java version correct?\n\n" +
+                        "👉 ACTION: Check the 'latest.log' file for errors.",
                         "Startup Crash Detected", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
 
@@ -614,65 +653,18 @@ namespace HotPotatoLauncher
         {
             if (line.Contains("Done") || line.Contains("For help, type"))
             {
-                Dispatcher.Invoke(async () => {
+                Dispatcher.Invoke(() => {
                     StatusIndicator.Background = Brushes.LimeGreen;
                     LblStatus.Text = "ONLINE";
                     MainProgressBar.IsIndeterminate = false;
                     _uptimeStopwatch.Restart();
-
-                    // FIX: UI should match the forced "False" state
-                    UpdateTreeSaverUi();
                 });
             }
         }
 
         // =========================================================
-        // MERGED ADVANCED SETTINGS LOGIC 
+        // SETTINGS LOGIC 
         // =========================================================
-
-        private async void BtnTreeSaver_Click(object sender, RoutedEventArgs e)
-        {
-            bool newState = !_profileMgr.ActiveProfile.IsTreeSaverEnabled;
-            _profileMgr.ActiveProfile.IsTreeSaverEnabled = newState;
-            _profileMgr.Save();
-
-            UpdateTreeSaverUi();
-
-            if (_serverMgr != null)
-            {
-                if (newState)
-                {
-                    Log("🛡️ TREE SAVER: Disabling TNT, Fire & Griefing...");
-
-                    // FIX: Using the exact commands you verified
-                    await _serverMgr.SendCommandAsync("/gamerule tnt_explodes false");
-                    await _serverMgr.SendCommandAsync("/gamerule mob_griefing false"); // "mob_griefing" usually lowercase in code
-                    await _serverMgr.SendCommandAsync("/gamerule fire_damage false");
-
-                    await _serverMgr.SendCommandAsync("/say [System] Tree Saver Enabled!");
-                }
-                else
-                {
-                    Log("⚠️ TREE SAVER: Re-enabling Dangers...");
-
-                    await _serverMgr.SendCommandAsync("/gamerule tnt_explodes true");
-                    await _serverMgr.SendCommandAsync("/gamerule mob_griefing true");
-                    await _serverMgr.SendCommandAsync("/gamerule fire_damage true");
-
-                    await _serverMgr.SendCommandAsync("/say [System] Tree Saver Disabled.");
-                }
-            }
-        }
-
-        private void UpdateTreeSaverUi()
-        {
-            if (BtnTreeSaver == null || TxtTreeSaverStatus == null) return;
-            bool active = _profileMgr.ActiveProfile.IsTreeSaverEnabled;
-
-            BtnTreeSaver.Content = active ? "PROTOCOL ACTIVE (SAFE)" : "ACTIVATE PROTECTION";
-            BtnTreeSaver.Background = active ? Brushes.DarkGreen : (SolidColorBrush)new BrushConverter().ConvertFrom("#C62828")!;
-            TxtTreeSaverStatus.Text = active ? "STATUS: 🛡️ PROTECTED" : "STATUS: ⚠️ UNPROTECTED";
-        }
 
         // Auto-Save UI Handlers
         private void ChkOnline_Click(object sender, RoutedEventArgs e) { _profileMgr.ActiveProfile.OnlineMode = ChkOnline.IsChecked == true; _profileMgr.Save(); }
@@ -722,7 +714,17 @@ namespace HotPotatoLauncher
             }
         }
 
-        private void ComboType_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (_profileMgr != null && ComboType != null) { _profileMgr.ActiveProfile.ModLoader = (ServerType)ComboType.SelectedIndex; _profileMgr.Save(); } }
+        private void ComboType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_profileMgr != null && ComboType != null)
+            {
+                var loader = (ServerType)ComboType.SelectedIndex;
+                _profileMgr.ActiveProfile.ModLoader = loader;
+                _profileMgr.Save();
+                // FIX 2.5: Update plugin/mod panel visibility on type change
+                UpdateModPluginVisibility(loader);
+            }
+        }
         private void ComboNet_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (_profileMgr != null && ComboNet != null && ComboNet.SelectedItem is NetworkType nt) { _profileMgr.ActiveProfile.NetworkMode = nt; _profileMgr.Save(); } }
         private void ComboJava_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (_profileMgr != null && ComboJava != null && ComboJava.SelectedItem is ComboBoxItem item) { _profileMgr.ActiveProfile.JavaFolder = item.Tag.ToString(); _profileMgr.Save(); } }
         private void ComboJars_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -731,6 +733,26 @@ namespace HotPotatoLauncher
             {
                 if (ComboJars.SelectedIndex > 0 && ComboJars.SelectedItem != null) _profileMgr.ActiveProfile.CustomJarName = ComboJars.SelectedItem.ToString();
                 else _profileMgr.ActiveProfile.CustomJarName = "";
+                _profileMgr.Save();
+            }
+        }
+
+        // FIX 2.4: Port change handler
+        private void TxtPort_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_profileMgr != null && TxtPort != null && int.TryParse(TxtPort.Text, out int port) && port >= 1024 && port <= 65535)
+            {
+                _profileMgr.ActiveProfile.ServerPort = port;
+                _profileMgr.Save();
+            }
+        }
+
+        // FIX 2.6: ForceUpgrade toggle handler
+        private void ChkForceUpgrade_Click(object sender, RoutedEventArgs e)
+        {
+            if (_profileMgr != null && ChkForceUpgrade != null)
+            {
+                _profileMgr.ActiveProfile.ForceUpgrade = ChkForceUpgrade.IsChecked == true;
                 _profileMgr.Save();
             }
         }
@@ -807,10 +829,26 @@ namespace HotPotatoLauncher
 
         private void BtnDelWorld_Click(object sender, RoutedEventArgs e)
         {
+            // FIX 3.7: Prevent deletion while server is running
+            if (_serverMgr != null && BtnStop.IsEnabled)
+            {
+                MessageBox.Show("⚠️ Cannot delete the world while the server is running!\nStop the server first.", "World Locked");
+                return;
+            }
+
             if (MessageBox.Show("Delete 'world' folder?", "Confirm", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
             {
                 var p = Path.Combine(AppPaths.ServerDataDir, _profileMgr.ActiveProfile.FolderName, "world");
-                try { if (Directory.Exists(p)) Directory.Delete(p, true); Log("🌍 World deleted. Restart to regenerate."); } catch { }
+                try
+                {
+                    if (Directory.Exists(p)) Directory.Delete(p, true);
+                    Log("🌍 World deleted. Restart to regenerate.");
+                }
+                catch (Exception ex)
+                {
+                    Log($"❌ Could not delete world: {ex.Message}");
+                    MessageBox.Show($"Failed to delete world folder:\n{ex.Message}", "Error");
+                }
             }
         }
         private void OpenPluginsFolder()
@@ -827,16 +865,24 @@ namespace HotPotatoLauncher
         private void BtnOpenFolder_Click(object sender, RoutedEventArgs e) { Process.Start("explorer.exe", Path.Combine(AppPaths.ServerDataDir, _profileMgr.ActiveProfile.FolderName)); }
         private void BtnOpenMods_Click(object sender, RoutedEventArgs e) { string p = Path.Combine(AppPaths.ServerDataDir, _profileMgr.ActiveProfile.FolderName, "mods"); Directory.CreateDirectory(p); Process.Start("explorer.exe", p); }
         private async void BtnHost_Click(object sender, RoutedEventArgs e) => await RunHostingLogic((int)RamSlider.Value);
-        private async void BtnStop_Click(object sender, RoutedEventArgs e) { BtnStop.IsEnabled = false; if (_serverMgr != null) await _serverMgr.StopServerAsync(); }
+        // FIX 3.6: Set user stop flag to bypass crash detection
+        private async void BtnStop_Click(object sender, RoutedEventArgs e) { _userRequestedStop = true; BtnStop.IsEnabled = false; if (_serverMgr != null) await _serverMgr.StopServerAsync(); }
         private async void BtnSend_Click(object sender, RoutedEventArgs e) { if (!string.IsNullOrWhiteSpace(TxtCommand.Text) && _serverMgr != null) { Log($"> {TxtCommand.Text}"); await _serverMgr.SendCommandAsync(TxtCommand.Text); TxtCommand.Clear(); } }
         private void TxtCommand_KeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Enter) BtnSend_Click(sender, e); }
 
+        // FIX 4.3: Safe clipboard access
         private void BtnCopyIp_Click(object sender, RoutedEventArgs e)
         {
             if (TxtZtIp != null)
             {
                 string t = TxtZtIp.Text.Replace("IP: ", "").Trim();
-                if (t != "Checking...") { Clipboard.SetText(t); BtnCopyIp.Content = "✅"; Task.Delay(1000).ContinueWith(_ => Dispatcher.Invoke(() => BtnCopyIp.Content = "📄")); }
+                if (t != "Checking...")
+                {
+                    try { Clipboard.SetText(t); }
+                    catch (System.Runtime.InteropServices.COMException) { Log("⚠️ Clipboard access failed. Try again."); return; }
+                    BtnCopyIp.Content = "✅";
+                    Task.Delay(1000).ContinueWith(_ => Dispatcher.Invoke(() => BtnCopyIp.Content = "📄"));
+                }
             }
         }
 
@@ -854,18 +900,60 @@ namespace HotPotatoLauncher
             }
         }
 
-        private void Log(string msg) => Dispatcher.Invoke(() => { if (LogBox != null) { LogBox.AppendText($"{DateTime.Now:T} {msg}\n"); LogBox.ScrollToEnd(); } });
+        // FIX 1.1: Batched logging — enqueue instead of synchronous Dispatcher.Invoke
+        private void Log(string msg) => _logQueue.Enqueue($"{DateTime.Now:T} {msg}");
+
+        private void FlushLogQueue(object? sender, EventArgs e)
+        {
+            if (_logQueue.IsEmpty || LogBox == null) return;
+
+            var sb = new StringBuilder();
+            while (_logQueue.TryDequeue(out string? line))
+                sb.AppendLine(line);
+
+            LogBox.AppendText(sb.ToString());
+            LogBox.ScrollToEnd();
+
+            // Cap log at ~5000 lines to prevent unbounded memory growth
+            if (LogBox.LineCount > 5000)
+            {
+                int removeUpTo = LogBox.GetCharacterIndexFromLineIndex(LogBox.LineCount - 4000);
+                LogBox.Text = LogBox.Text.Substring(removeUpTo);
+            }
+        }
+
+        // FIX 3.2: Named handler so it can be unsubscribed
+        private void OnRcloneProgress(double percent)
+        {
+            Dispatcher.BeginInvoke(() => {
+                if (MainProgressBar != null)
+                {
+                    MainProgressBar.IsIndeterminate = false;
+                    MainProgressBar.Value = percent;
+                }
+            });
+        }
 
         private void BtnAddProfile_Click(object sender, RoutedEventArgs e) { string n = Microsoft.VisualBasic.Interaction.InputBox("New Profile Name:", "Create", "My Server"); if (!string.IsNullOrWhiteSpace(n)) { _profileMgr.AddProfile(n); ComboProfiles.Items.Refresh(); ComboProfiles.SelectedIndex = _profileMgr.Profiles.Count - 1; } }
+        // FIX 3.5: Only remove profile from memory if folder deletion succeeds
         private void BtnDelProfile_Click(object sender, RoutedEventArgs e)
         {
             var p = _profileMgr.ActiveProfile;
             if (MessageBox.Show($"Delete '{p.ProfileName}'?\nTHIS DELETES ALL FILES PERMANENTLY.", "Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                try { Directory.Delete(Path.Combine(AppPaths.ServerDataDir, p.FolderName), true); } catch { }
-                _profileMgr.DeleteProfile(p);
-                ComboProfiles.Items.Refresh();
-                ComboProfiles.SelectedIndex = 0;
+                string folderPath = Path.Combine(AppPaths.ServerDataDir, p.FolderName);
+                try
+                {
+                    if (Directory.Exists(folderPath)) Directory.Delete(folderPath, true);
+                    _profileMgr.DeleteProfile(p);
+                    ComboProfiles.Items.Refresh();
+                    ComboProfiles.SelectedIndex = 0;
+                }
+                catch (Exception ex)
+                {
+                    Log($"❌ Could not delete profile folder: {ex.Message}");
+                    MessageBox.Show($"Failed to delete server folder (files may be locked):\n{ex.Message}\n\nProfile was NOT removed.", "Deletion Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
             }
         }
 

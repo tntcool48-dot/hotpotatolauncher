@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -11,6 +11,7 @@ namespace HotPotatoLauncher.Networking
     public class PlayitManager
     {
         private Process? _process;
+        private int? _processId; // FIX 4.4: Track PID for reliable cleanup
         public event Action<string>? OnLog;
 
         public async Task<string> StartTunnelAsync()
@@ -22,7 +23,7 @@ namespace HotPotatoLauncher.Networking
             {
                 FileName = exePath,
                 UseShellExecute = true, // Must be true to show the window
-                CreateNoWindow = false, // FIX: SHOW THE WINDOW so you can see the link!
+                CreateNoWindow = false, // Show the window so user can see the link
                 WindowStyle = ProcessWindowStyle.Normal
             };
 
@@ -31,17 +32,47 @@ namespace HotPotatoLauncher.Networking
             OnLog?.Invoke("👉 Check that window for the 'Claim URL' or the IP address!");
 
             _process = Process.Start(info);
-
-            // Since we popped out the window, we can't scrape the text automatically 
-            // as easily (UseShellExecute limit), but the user is guaranteed to see it.
-            // We will assume success and ask the user to verify.
+            if (_process != null)
+            {
+                _processId = _process.Id;
+                OnLog?.Invoke($"🔧 Playit started (PID: {_processId})");
+            }
 
             return "Check Playit Window";
         }
 
+        // FIX 4.4: PID-based kill for reliable cleanup
         public void Stop()
         {
-            try { _process?.Kill(); } catch { }
+            // Try graceful kill via stored reference
+            try
+            {
+                if (_process != null && !_process.HasExited)
+                {
+                    _process.Kill();
+                    OnLog?.Invoke("🛑 Playit process terminated.");
+                    return;
+                }
+            }
+            catch { }
+
+            // Fallback: kill by PID if reference is stale
+            if (_processId.HasValue)
+            {
+                try
+                {
+                    var proc = Process.GetProcessById(_processId.Value);
+                    if (!proc.HasExited)
+                    {
+                        proc.Kill();
+                        OnLog?.Invoke($"🛑 Playit process (PID: {_processId}) killed via fallback.");
+                    }
+                }
+                catch { /* Process already exited or PID reused — safe to ignore */ }
+            }
+
+            _process = null;
+            _processId = null;
         }
 
         private async Task EnsureDownloadedAsync(string path)
@@ -49,10 +80,18 @@ namespace HotPotatoLauncher.Networking
             if (File.Exists(path)) return;
 
             OnLog?.Invoke("⬇️ Downloading Playit.gg Agent...");
-            using var client = new HttpClient();
-            var bytes = await client.GetByteArrayAsync("https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-Windows-x86_64.exe");
-            await File.WriteAllBytesAsync(path, bytes);
-            OnLog?.Invoke("✅ Playit Installed.");
+            try
+            {
+                using var client = new HttpClient();
+                var bytes = await client.GetByteArrayAsync("https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-Windows-x86_64.exe");
+                await File.WriteAllBytesAsync(path, bytes);
+                OnLog?.Invoke("✅ Playit Installed.");
+            }
+            catch (Exception ex)
+            {
+                OnLog?.Invoke($"❌ Playit download failed: {ex.Message}");
+                throw;
+            }
         }
     }
 }

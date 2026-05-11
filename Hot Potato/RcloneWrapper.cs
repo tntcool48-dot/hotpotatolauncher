@@ -1,9 +1,10 @@
-﻿#nullable enable
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -18,14 +19,21 @@ namespace HotPotatoLauncher.Core
         public event Action<string>? OnLogReceived;
         public event Action<double>? OnProgressUpdate; // For Loading Bar
 
+        // FIX 4.3: Sanitize remote vault name to prevent command injection
+        private static string SanitizeRemotePath(string path)
+        {
+            // Strip characters that could enable shell injection
+            return Regex.Replace(path, @"[;&|`$(){}!<>]", "");
+        }
+
         public RcloneWrapper(string localProfilePath, string remoteVault, string profileName)
         {
             _localProfilePath = localProfilePath;
-            _remoteVault = remoteVault;
-            _profileName = profileName;
+            _remoteVault = SanitizeRemotePath(remoteVault);
+            _profileName = SanitizeRemotePath(profileName);
         }
 
-        // --- NEW: Safety Check (Prevents Deletion) ---
+        // --- Safety Check (Prevents Deletion) ---
         public async Task<bool> CheckCloudHasFilesAsync()
         {
             // We use "rclone size" to just look at the folder stats
@@ -49,8 +57,9 @@ namespace HotPotatoLauncher.Core
                 // If it says "Total objects: 0", then it's empty.
                 return !output.Contains("Total objects: 0");
             }
-            catch
+            catch (Exception ex)
             {
+                OnLogReceived?.Invoke($"⚠️ Cloud check failed: {ex.Message}");
                 return false; // Assume empty if check fails (safest option)
             }
         }
@@ -87,7 +96,10 @@ namespace HotPotatoLauncher.Core
                 }
                 await p.WaitForExitAsync();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                OnLogReceived?.Invoke($"⚠️ Cloud profile listing failed: {ex.Message}");
+            }
             return profiles;
         }
 
@@ -99,9 +111,9 @@ namespace HotPotatoLauncher.Core
             {
                 await RunRclone($"sync \"{remotePath}\" \"{_localProfilePath}\" --create-empty-src-dirs");
             }
-            catch
+            catch (Exception ex)
             {
-                OnLogReceived?.Invoke($"⚠️ Cloud profile error.");
+                OnLogReceived?.Invoke($"⚠️ Cloud profile download error: {ex.Message}");
             }
         }
 
@@ -111,22 +123,54 @@ namespace HotPotatoLauncher.Core
             {
                 string remotePath = $"{_remoteVault}Profiles/{_profileName}";
                 OnLogReceived?.Invoke($"⬆️ Uploading Profile '{_profileName}'...");
-                await RunRclone($"copy \"{_localProfilePath}\" \"{remotePath}\" --create-empty-src-dirs");
+                try
+                {
+                    await RunRclone($"copy \"{_localProfilePath}\" \"{remotePath}\" --create-empty-src-dirs");
+                }
+                catch (Exception ex)
+                {
+                    OnLogReceived?.Invoke($"⚠️ Cloud upload error: {ex.Message}");
+                }
             }
         }
 
-        // --- NEW: Sync Global Settings (Fixes UUID/Inventory Issues) ---
-        public async Task SyncGlobalConfigDownAsync()
+        // --- FIX 1.3: Merge global config instead of blind overwrite ---
+        public async Task MergeGlobalConfigDownAsync()
         {
-            // Pulls profiles.json from cloud to local
             string remoteFile = $"{_remoteVault}profiles.json";
-            string localFile = Path.Combine(AppPaths.BaseDir, "profiles.json");
+            string tempDir = Path.Combine(Path.GetTempPath(), "HotPotato_CloudSync");
+            Directory.CreateDirectory(tempDir);
+            string tempFile = Path.Combine(tempDir, "profiles.json");
+
             try
             {
-                // We use "copy" not sync, so we don't delete if missing
-                await RunRclone($"copy \"{remoteFile}\" \"{AppPaths.BaseDir}\"");
+                // Download cloud profiles.json to temp location
+                await RunRclone($"copy \"{remoteFile}\" \"{tempDir}\"");
+
+                if (File.Exists(tempFile))
+                {
+                    // Load the cloud version
+                    var cloudManager = JsonSerializer.Deserialize<ProfileManager>(
+                        await File.ReadAllTextAsync(tempFile));
+
+                    if (cloudManager != null)
+                    {
+                        // Load current local version and merge
+                        var localManager = ProfileManager.Load();
+                        localManager.MergeFromCloud(cloudManager);
+                    }
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                OnLogReceived?.Invoke($"⚠️ Cloud config merge error: {ex.Message}");
+            }
+            finally
+            {
+                // Cleanup temp
+                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            }
         }
 
         public async Task SyncGlobalConfigUpAsync()
@@ -136,7 +180,14 @@ namespace HotPotatoLauncher.Core
             string remotePath = _remoteVault;
             if (File.Exists(localFile))
             {
-                await RunRclone($"copy \"{localFile}\" \"{remotePath}\"");
+                try
+                {
+                    await RunRclone($"copy \"{localFile}\" \"{remotePath}\"");
+                }
+                catch (Exception ex)
+                {
+                    OnLogReceived?.Invoke($"⚠️ Cloud config upload error: {ex.Message}");
+                }
             }
         }
 
@@ -149,7 +200,14 @@ namespace HotPotatoLauncher.Core
                 await RunRclone($"copyto \"{remotePath}\" \"{tempFile}\"");
                 return await File.ReadAllTextAsync(tempFile);
             }
-            catch { return ""; }
+            catch
+            {
+                return "";
+            }
+            finally
+            {
+                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+            }
         }
 
         public async Task WriteRemoteFileAsync(string fileName, string content)
@@ -157,10 +215,15 @@ namespace HotPotatoLauncher.Core
             string remotePath = $"{_remoteVault}Profiles/{_profileName}/{fileName}";
             string tempFile = Path.GetTempFileName();
 
-            await File.WriteAllTextAsync(tempFile, content);
-            await RunRclone($"copyto \"{tempFile}\" \"{remotePath}\"");
-
-            if (File.Exists(tempFile)) File.Delete(tempFile);
+            try
+            {
+                await File.WriteAllTextAsync(tempFile, content);
+                await RunRclone($"copyto \"{tempFile}\" \"{remotePath}\"");
+            }
+            finally
+            {
+                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+            }
         }
 
         private async Task RunRclone(string args)
@@ -178,6 +241,7 @@ namespace HotPotatoLauncher.Core
             };
 
             using var p = Process.Start(info);
+            if (p == null) throw new Exception("Failed to start rclone process.");
 
             // Regex to grab the percentage (e.g. "Transferred: ... 42%")
             var progressRegex = new Regex(@"(\d+)%");

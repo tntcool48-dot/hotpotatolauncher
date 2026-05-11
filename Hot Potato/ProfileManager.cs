@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 
 namespace HotPotatoLauncher.Core
 {
-    // NEW: The Hybrid Network Modes
+    // Network Modes
     public enum NetworkType
     {
         Automatic,   // Try UPnP -> Fallback to Playit
@@ -33,7 +33,7 @@ namespace HotPotatoLauncher.Core
         public bool ImportWorldMode { get; set; } = true;
         public bool IsCloudEnabled { get; set; } = true;
 
-        // --- NEW WORLD GEN SETTINGS ---
+        // World Gen Settings
         public string WorldSeed { get; set; } = "";
         public string GameMode { get; set; } = "survival";
         public string Difficulty { get; set; } = "easy";
@@ -41,8 +41,9 @@ namespace HotPotatoLauncher.Core
 
         public string RemoteVaultName { get; set; } = "potato_vault:HotPotatoLauncher/";
 
-        // NEW: Updated Network Mode default
+        // Network
         public NetworkType NetworkMode { get; set; } = NetworkType.Automatic;
+        public int ServerPort { get; set; } = 25565; // FIX 2.4: Configurable port
 
         public ServerType ModLoader { get; set; } = ServerType.Vanilla;
         public string JavaFolder { get; set; } = "java17";
@@ -56,7 +57,9 @@ namespace HotPotatoLauncher.Core
         public bool UseWhitelist { get; set; } = false;
         public bool ShowConsole { get; set; } = false;
         public bool OnlineMode { get; set; } = true;
-        public bool IsTreeSaverEnabled { get; set; } = false;
+
+        // FIX 2.6: Force Upgrade toggle
+        public bool ForceUpgrade { get; set; } = false;
 
         public List<string> FriendUsernames { get; set; } = new List<string>();
     }
@@ -68,12 +71,13 @@ namespace HotPotatoLauncher.Core
         public bool FirstRunCheck { get; set; } = true;
         public bool IsOmarMode { get; set; } = false;
 
+        // FIX 3.1: ActiveProfile getter no longer mutates the collection.
+        // Initialization is guaranteed in Load().
         [JsonIgnore]
         public PotatoProfile ActiveProfile
         {
             get
             {
-                if (Profiles.Count == 0) Profiles.Add(new PotatoProfile { ProfileName = "Default" });
                 if (LastUsedIndex < 0 || LastUsedIndex >= Profiles.Count) LastUsedIndex = 0;
                 return Profiles[LastUsedIndex];
             }
@@ -81,23 +85,51 @@ namespace HotPotatoLauncher.Core
 
         private static string ConfigPath => Path.Combine(AppPaths.BaseDir, "profiles.json");
 
+        // FIX 3.1: Ensure Profiles list is never empty after load
         public static ProfileManager Load()
         {
+            ProfileManager mgr;
             if (!File.Exists(ConfigPath))
             {
-                var mgr = new ProfileManager();
-                mgr.Profiles.Add(new PotatoProfile());
-                mgr.Save();
-                return mgr;
+                mgr = new ProfileManager();
             }
-            try { return JsonSerializer.Deserialize<ProfileManager>(File.ReadAllText(ConfigPath)) ?? new ProfileManager(); }
-            catch { return new ProfileManager(); }
+            else
+            {
+                try
+                {
+                    mgr = JsonSerializer.Deserialize<ProfileManager>(File.ReadAllText(ConfigPath)) ?? new ProfileManager();
+                }
+                catch
+                {
+                    mgr = new ProfileManager();
+                }
+            }
+
+            // Guarantee at least one profile exists (moved from ActiveProfile getter)
+            if (mgr.Profiles.Count == 0)
+            {
+                mgr.Profiles.Add(new PotatoProfile { ProfileName = "Default" });
+            }
+
+            // Clamp index
+            if (mgr.LastUsedIndex < 0 || mgr.LastUsedIndex >= mgr.Profiles.Count)
+                mgr.LastUsedIndex = 0;
+
+            mgr.Save();
+            return mgr;
         }
 
         public void Save()
         {
-            var opts = new JsonSerializerOptions { WriteIndented = true };
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, opts));
+            try
+            {
+                var opts = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, opts));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ProfileManager] Save failed: {ex.Message}");
+            }
         }
 
         public void AddProfile(string name)
@@ -114,6 +146,26 @@ namespace HotPotatoLauncher.Core
                 LastUsedIndex = 0;
                 Save();
             }
+        }
+
+        /// <summary>
+        /// FIX 1.3: Merge cloud profiles into local, preserving locally-created profiles.
+        /// </summary>
+        public void MergeFromCloud(ProfileManager cloudManager)
+        {
+            foreach (var cloudProfile in cloudManager.Profiles)
+            {
+                bool existsLocally = Profiles.Exists(p =>
+                    p.FolderName.Equals(cloudProfile.FolderName, StringComparison.OrdinalIgnoreCase));
+
+                if (!existsLocally)
+                {
+                    Profiles.Add(cloudProfile);
+                }
+            }
+
+            // Preserve local state — don't overwrite IsOmarMode, FirstRunCheck, LastUsedIndex
+            Save();
         }
     }
 }

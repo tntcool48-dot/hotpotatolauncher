@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 
 namespace HotPotatoLauncher.Core
@@ -8,7 +8,7 @@ namespace HotPotatoLauncher.Core
         // 1. The folder where the .exe runs (Release/net8.0-windows)
         public static string BaseDir => AppDomain.CurrentDomain.BaseDirectory;
 
-        // 2. The "Tools" folder (from your screenshot)
+        // 2. The "Tools" folder
         public static string ToolsDir => Path.Combine(BaseDir, "Tools");
 
         // 3. Server Data stays at the root (keeps worlds separate from tools)
@@ -19,8 +19,7 @@ namespace HotPotatoLauncher.Core
         // Rclone is inside Tools
         public static string RcloneExe => Path.Combine(ToolsDir, "rclone.exe");
 
-        // ZeroTier is inside Tools (This was the missing error)
-        public static string ZeroTierCli => Path.Combine(ToolsDir, "zerotier-cli.bat");
+        // FIX 4.4: Removed ZeroTierCli — dead code
 
         // Java is inside Tools
         public static string GetJavaPath(string javaFolderName)
