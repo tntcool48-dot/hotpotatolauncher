@@ -110,8 +110,8 @@ namespace HotPotatoLauncher.Core
             // Set variant to IETF (bits 6-7 of byte 8)
             hash[8] = (byte)((hash[8] & 0x3F) | 0x80);
 
-            var guid = new Guid(hash);
-            return guid.ToString();
+            // Bypass C# Guid constructor to preserve Big-Endian formatting required by Java/Minecraft
+            return $"{Convert.ToHexString(hash, 0, 4)}-{Convert.ToHexString(hash, 4, 2)}-{Convert.ToHexString(hash, 6, 2)}-{Convert.ToHexString(hash, 8, 2)}-{Convert.ToHexString(hash, 10, 6)}".ToLower();
         }
 
         // --- FIX 2.3: Merge whitelist instead of overwriting ---

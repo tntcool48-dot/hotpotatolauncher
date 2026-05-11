@@ -91,6 +91,12 @@ namespace HotPotatoLauncher
             InitializeEngines();
         }
 
+        private async void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            // PART 2: Missing File Automation (The Crash Fix)
+            await DependencyManager.EnsureDependenciesAsync(Log);
+        }
+
         private void InitializeEngines()
         {
             var p = _profileMgr.ActiveProfile;
