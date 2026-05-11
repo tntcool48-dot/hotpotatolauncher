@@ -220,6 +220,10 @@ namespace HotPotatoLauncher.Core
                 await File.WriteAllTextAsync(tempFile, content);
                 await RunRclone($"copyto \"{tempFile}\" \"{remotePath}\"");
             }
+            catch (Exception ex)
+            {
+                OnLogReceived?.Invoke($"⚠️ Could not write remote file '{fileName}': {ex.Message}");
+            }
             finally
             {
                 try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
@@ -228,6 +232,10 @@ namespace HotPotatoLauncher.Core
 
         private async Task RunRclone(string args)
         {
+            if (!File.Exists(AppPaths.RcloneExe))
+            {
+                throw new Exception($"rclone.exe not found at '{AppPaths.RcloneExe}'. Please download rclone and place it in the Tools folder.");
+            }
             var info = new ProcessStartInfo
             {
                 FileName = AppPaths.RcloneExe,
