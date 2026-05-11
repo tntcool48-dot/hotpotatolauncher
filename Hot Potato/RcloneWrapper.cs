@@ -43,6 +43,7 @@ namespace HotPotatoLauncher.Core
                 FileName = AppPaths.RcloneExe,
                 Arguments = $"size \"{remotePath}\"", // Returns "Total objects: 0" if empty
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
@@ -52,9 +53,15 @@ namespace HotPotatoLauncher.Core
                 using var p = Process.Start(info);
                 if (p == null) return false;
                 string output = await p.StandardOutput.ReadToEndAsync();
+                string error = await p.StandardError.ReadToEndAsync();
                 await p.WaitForExitAsync();
 
-                // If it says "Total objects: 0", then it's empty.
+                // If rclone throws an error about a missing directory, the cloud is empty.
+                if (error.Contains("directory not found") || error.Contains("error reading source")) return false;
+
+                // If output is completely empty and it errored, it's empty.
+                if (string.IsNullOrWhiteSpace(output)) return false;
+
                 return !output.Contains("Total objects: 0");
             }
             catch (Exception ex)

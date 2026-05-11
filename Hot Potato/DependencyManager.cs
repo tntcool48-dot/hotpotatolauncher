@@ -56,16 +56,28 @@ namespace HotPotatoLauncher.Core
                     Directory.CreateDirectory(installersDir);
                 }
 
-                string[] defaultJars = { "default_paper.jar", "default_forge.jar" };
-                foreach (var jar in defaultJars)
+                string paperPath = Path.Combine(installersDir, "default_paper.jar");
+                if (!File.Exists(paperPath))
                 {
-                    string jarPath = Path.Combine(installersDir, jar);
-                    if (!File.Exists(jarPath))
+                    logCallback?.Invoke("⏳ Downloading default Paper 1.20.4 jar...");
+                    try 
                     {
-                        logCallback?.Invoke($"⏳ Creating dummy {jar}...");
-                        await File.WriteAllTextAsync(jarPath, "This is a dummy jar to prevent missing file crashes during the first run. Please download the real jar.");
-                        logCallback?.Invoke($"✅ {jar} created.");
+                        using var client = new HttpClient();
+                        // Official PaperMC 1.20.4 direct download build 496
+                        byte[] paperJar = await client.GetByteArrayAsync("https://api.papermc.io/v2/projects/paper/versions/1.20.4/builds/496/downloads/paper-1.20.4-496.jar");
+                        await File.WriteAllBytesAsync(paperPath, paperJar);
+                        logCallback?.Invoke("✅ default_paper.jar downloaded.");
                     }
+                    catch { logCallback?.Invoke("⚠️ Failed to download Paper jar."); }
+                }
+
+                // Leave forge and fabric as text files for now
+                string forgePath = Path.Combine(installersDir, "default_forge.jar");
+                if (!File.Exists(forgePath))
+                {
+                    logCallback?.Invoke($"⏳ Creating dummy default_forge.jar...");
+                    await File.WriteAllTextAsync(forgePath, "This is a dummy jar to prevent missing file crashes during the first run. Please download the real jar.");
+                    logCallback?.Invoke($"✅ default_forge.jar created.");
                 }
             }
             catch (Exception ex)

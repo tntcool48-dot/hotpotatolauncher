@@ -88,13 +88,16 @@ namespace HotPotatoLauncher
             _logFlushTimer.Tick += FlushLogQueue;
             _logFlushTimer.Start();
 
-            InitializeEngines();
         }
 
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // PART 2: Missing File Automation (The Crash Fix)
+            BtnHost.IsEnabled = false;
+            Log("Checking system dependencies...");
             await DependencyManager.EnsureDependenciesAsync(Log);
+
+            InitializeEngines(); // Safe to initialize now
+            BtnHost.IsEnabled = true;
         }
 
         private void InitializeEngines()
