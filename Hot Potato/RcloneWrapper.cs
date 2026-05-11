@@ -41,7 +41,7 @@ namespace HotPotatoLauncher.Core
             var info = new ProcessStartInfo
             {
                 FileName = AppPaths.RcloneExe,
-                Arguments = $"size \"{remotePath}\"", // Returns "Total objects: 0" if empty
+                Arguments = $"size \"{remotePath}\" --exclude \"lock.json\"", // Returns "Total objects: 0" if empty, ignores lock
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -201,19 +201,29 @@ namespace HotPotatoLauncher.Core
         public async Task<string> ReadRemoteFileAsync(string fileName)
         {
             string remotePath = $"{_remoteVault}Profiles/{_profileName}/{fileName}";
-            string tempFile = Path.GetTempFileName();
+            var info = new ProcessStartInfo
+            {
+                FileName = AppPaths.RcloneExe,
+                Arguments = $"cat \"{remotePath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
             try
             {
-                await RunRclone($"copyto \"{remotePath}\" \"{tempFile}\"");
-                return await File.ReadAllTextAsync(tempFile);
+                using var p = Process.Start(info);
+                if (p == null) return "";
+                string output = await p.StandardOutput.ReadToEndAsync();
+                await p.WaitForExitAsync();
+
+                if (p.ExitCode != 0) return "";
+                return output;
             }
             catch
             {
                 return "";
-            }
-            finally
-            {
-                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
             }
         }
 
