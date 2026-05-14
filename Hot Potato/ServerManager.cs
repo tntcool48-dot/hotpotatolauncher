@@ -186,6 +186,17 @@ namespace HotPotatoLauncher.Core
             string jarName = customJar;
             if (string.IsNullOrWhiteSpace(jarName)) jarName = "server.jar";
 
+            // FIX 2.2: The Dimension Migration Loop (Paper -> Fabric/Forge data loss)
+            // Paper separates Nether/End into world_nether and world_the_end.
+            // Fabric/Forge/Vanilla expect them inside world/DIM-1 and world/DIM1.
+            // If the user switches away from Paper, we must manually move the dimensions back to the Vanilla layout
+            // otherwise the new loader will generate brand new dimensions and the user will lose their builds!
+            bool isPaper = jarName.ToLower().Contains("paper");
+            if (!isPaper)
+            {
+                MigrateDimensionsToVanilla();
+            }
+
             // Check for modern Forge run.bat (Forge 1.17+ generates this)
             string runBatPath = Path.Combine(_serverRoot, "run.bat");
             bool useRunBat = (type == ServerType.Forge && File.Exists(runBatPath));
@@ -322,6 +333,39 @@ namespace HotPotatoLauncher.Core
                     // Only force-kill as an absolute last resort after 60s
                     try { _activeProcess.Kill(); } catch { }
                 }
+            }
+        }
+
+        private void MigrateDimensionsToVanilla()
+        {
+            string worldDir = Path.Combine(_serverRoot, "world");
+            string paperNether = Path.Combine(_serverRoot, "world_nether", "DIM-1");
+            string paperEnd = Path.Combine(_serverRoot, "world_the_end", "DIM1");
+
+            string vanillaNether = Path.Combine(worldDir, "DIM-1");
+            string vanillaEnd = Path.Combine(worldDir, "DIM1");
+
+            try
+            {
+                Directory.CreateDirectory(worldDir);
+
+                // Migrate Nether
+                if (Directory.Exists(paperNether) && !Directory.Exists(vanillaNether))
+                {
+                    OnLogReceived?.Invoke("📦 Migrating Nether chunks from Paper to Vanilla layout...");
+                    Directory.Move(paperNether, vanillaNether);
+                }
+
+                // Migrate End
+                if (Directory.Exists(paperEnd) && !Directory.Exists(vanillaEnd))
+                {
+                    OnLogReceived?.Invoke("📦 Migrating End chunks from Paper to Vanilla layout...");
+                    Directory.Move(paperEnd, vanillaEnd);
+                }
+            }
+            catch (Exception ex)
+            {
+                OnLogReceived?.Invoke($"⚠️ Dimension migration warning: {ex.Message}");
             }
         }
     }
