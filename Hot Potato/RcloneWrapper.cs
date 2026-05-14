@@ -116,9 +116,9 @@ namespace HotPotatoLauncher.Core
             OnLogReceived?.Invoke($"⬇️ Syncing Profile '{_profileName}' from Cloud...");
             try
             {
-                // Use 'copy' instead of 'sync' to NEVER delete local files that don't exist in cloud.
-                // This prevents the cloud from erasing newer local chunks after a failed upload.
-                await RunRclone($"copy \"{remotePath}\" \"{_localProfilePath}\" --create-empty-src-dirs");
+                // Use 'copy --update' to NEVER overwrite newer local chunks with older cloud chunks.
+                // This prevents the cloud from rolling back the world if an upload was missed.
+                await RunRclone($"copy \"{remotePath}\" \"{_localProfilePath}\" --update --create-empty-src-dirs");
             }
             catch (Exception ex)
             {
