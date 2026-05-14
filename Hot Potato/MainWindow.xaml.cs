@@ -972,7 +972,23 @@ namespace HotPotatoLauncher
         }
 
         private void ComboProfiles_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (ComboProfiles.SelectedIndex == -1) return; _profileMgr.LastUsedIndex = ComboProfiles.SelectedIndex; _profileMgr.Save(); InitializeEngines(); }
-        protected override void OnClosing(System.ComponentModel.CancelEventArgs e) { ServerManager.KillZombieProcesses(); base.OnClosing(e); }
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            // If the server is running, block the close to prevent data loss
+            if (_serverMgr != null && BtnStop.IsEnabled)
+            {
+                e.Cancel = true;
+                MessageBox.Show(
+                    "The server is still running!\n\n" +
+                    "Please click the STOP button first to safely save the world and sync to the cloud.\n\n" +
+                    "Closing the window now would skip the cloud upload and could cause chunk rollbacks.",
+                    "Server Still Running", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            ServerManager.KillZombieProcesses();
+            base.OnClosing(e);
+        }
         private void BtnPasteWorld_Click(object sender, RoutedEventArgs e)
         {
             // Just re-use the existing folder opener

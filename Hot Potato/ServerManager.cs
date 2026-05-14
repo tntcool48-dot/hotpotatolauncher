@@ -300,9 +300,28 @@ namespace HotPotatoLauncher.Core
         {
             if (_activeProcess != null && !_activeProcess.HasExited)
             {
-                try { await SendCommandAsync("stop"); } catch { }
-                try { await _activeProcess.WaitForExitAsync(new System.Threading.CancellationTokenSource(10000).Token); }
-                catch { try { _activeProcess.Kill(); } catch { } }
+                try
+                {
+                    // First, force a world save to flush all chunks to disk
+                    await SendCommandAsync("save-all");
+                    await Task.Delay(1500); // Give the server time to finish writing
+
+                    // Now gracefully request shutdown
+                    await SendCommandAsync("stop");
+                }
+                catch { }
+
+                try
+                {
+                    // Wait up to 60 seconds for large worlds to finish saving
+                    await _activeProcess.WaitForExitAsync(
+                        new System.Threading.CancellationTokenSource(60000).Token);
+                }
+                catch
+                {
+                    // Only force-kill as an absolute last resort after 60s
+                    try { _activeProcess.Kill(); } catch { }
+                }
             }
         }
     }

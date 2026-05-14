@@ -116,7 +116,9 @@ namespace HotPotatoLauncher.Core
             OnLogReceived?.Invoke($"⬇️ Syncing Profile '{_profileName}' from Cloud...");
             try
             {
-                await RunRclone($"sync \"{remotePath}\" \"{_localProfilePath}\" --create-empty-src-dirs");
+                // Use 'copy' instead of 'sync' to NEVER delete local files that don't exist in cloud.
+                // This prevents the cloud from erasing newer local chunks after a failed upload.
+                await RunRclone($"copy \"{remotePath}\" \"{_localProfilePath}\" --create-empty-src-dirs");
             }
             catch (Exception ex)
             {
@@ -256,7 +258,7 @@ namespace HotPotatoLauncher.Core
             var info = new ProcessStartInfo
             {
                 FileName = AppPaths.RcloneExe,
-                Arguments = $"{args} -P", // -P enables progress stats
+                Arguments = $"{args} -P --tpslimit 2 --transfers 2 --checkers 4 --drive-chunk-size 16M",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
